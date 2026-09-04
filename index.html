@@ -521,6 +521,14 @@
       </div>
     </div>
 
+    <p class="leg-title">Дистанція цілі (прапорець)</p>
+    <div class="diff-control">
+      <input type="range" id="goal-slider" min="400" max="3000" value="1000" step="100">
+      <div class="diff-info">
+        <span id="goal-val">1000м</span>
+      </div>
+    </div>
+
     <p class="leg-title">Елементи світу</p>
 
     <div class="ni" id="ni-CONNECTOR">
@@ -723,11 +731,12 @@
     ];
 
     // ── STATE ─────────────────────────────────────────────
-    let lvlIdx = 0, simMode = false, simTime = 0, cam = { x: 0 };
+    let lvlIdx = 0, simMode = false, simTime = 0, cam = { x: 0, y: 0 };
     let bodyNodes = [], worldNodes = [], springs = [], particles = [];
     let hovNode = null, unlocked = new Set(), goalX = 0, won = false;
     let activeMode = 6; // 2..6 elements available
     let curDiff = 1;    // 1 (flat) .. 10 (mountains)
+    let customGoalDist = 1000;
 
     const MODE_ELEMENTS = {
       2: ['CONNECTOR', 'FIELD_GEN'],
@@ -796,7 +805,7 @@
       }
     }
     function drawP() {
-      ctx.save(); ctx.translate(-cam.x, 0);
+      ctx.save(); ctx.translate(-cam.x, -cam.y);
       for (const p of particles) {
         ctx.globalAlpha = p.life; ctx.fillStyle = p.col;
         ctx.beginPath(); ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2); ctx.fill();
@@ -805,45 +814,32 @@
     }
 
     // ── PROCEDURAL TERRAIN ────────────────────────────────
-    function GY() { return canvas.height - 90; }
+    function GY() { return canvas.height * 0.58; }
 
     function getGroundY(x, diff = curDiff) {
       const baseGY = GY();
       if (diff <= 1) return baseGY;
 
-      // Exponential scaling so higher levels (7-10) escalate into steep mountains
       const normDiff = (diff - 1) / 9.0;
-      const scale = Math.pow(normDiff, 1.25);
+      const scale = Math.pow(normDiff, 1.2);
 
-      // Safe flat zone for initial body assembly
       let flatFactor = 1.0;
-      if (x < 420) {
-        const raw = Math.max(0, (x - 200) / 220);
-        flatFactor = raw * raw; // smooth cubic easing
+      if (x < 440) {
+        const raw = Math.max(0, (x - 200) / 240);
+        flatFactor = raw * raw;
       }
 
-      // Multi-octave terrain waves:
-      // 1. Large mountain elevations
-      const mountain = Math.sin(x * 0.0012 - 0.8) * (180 * scale);
-      
-      // 2. Steep rolling hills & valleys
-      const hill = Math.sin(x * 0.0038 + 1.4) * (115 * scale);
+      // Multi-octave terrain waves centered around baseGY so peaks rise and valleys drop naturally
+      const mountain = Math.sin(x * 0.0011 - 0.7) * (220 * scale);
+      const hill = Math.sin(x * 0.0036 + 1.2) * (120 * scale);
+      const ridge = Math.abs(Math.sin(x * 0.0085 + 0.5)) * (-90 * scale);
+      const roughness = Math.cos(x * 0.02) * (24 * scale);
 
-      // 3. Sharp ridges & jagged peaks
-      const ridge = Math.abs(Math.sin(x * 0.009 + 0.6)) * (-85 * scale);
-
-      // 4. Fine surface roughness
-      const roughness = Math.cos(x * 0.022) * (25 * scale);
-
-      // 5. Deep canyons & high cliffs at difficulty >= 5
       const canyonScale = Math.max(0, (diff - 4) / 6.0);
-      const canyon = Math.sin(x * 0.0022 + 2.8) * (110 * canyonScale);
+      const canyon = Math.sin(x * 0.002 + 2.5) * (130 * canyonScale);
 
       const totalOffset = (mountain + hill + ridge + roughness + canyon) * flatFactor;
-
-      const minY = 110;
-      const maxY = canvas.height - 45;
-      return Math.max(minY, Math.min(maxY, baseGY - totalOffset));
+      return baseGY - totalOffset;
     }
 
     function getGroundNormal(x, diff = curDiff) {
@@ -859,8 +855,8 @@
       lvlIdx = idx;
       const lv = LEVELS[idx];
       bodyNodes = []; worldNodes = []; springs = []; particles = [];
-      simMode = false; simTime = 0; cam.x = 0; won = false;
-      goalX = SX + lv.goalDist;
+      simMode = false; simTime = 0; cam.x = 0; cam.y = 0; won = false;
+      goalX = SX + (customGoalDist || lv.goalDist);
 
       unlocked = new Set(MODE_ELEMENTS[activeMode]);
       updatePanelLocks();
@@ -1026,8 +1022,15 @@
       // Camera
       if (all.length > 0) {
         const cx = all.reduce((s, n) => s + n.x, 0) / all.length;
-        cam.x += (cx - canvas.width / 2 - cam.x) * 0.04;
+        const cy = all.reduce((s, n) => s + n.y, 0) / all.length;
+
+        cam.x += (cx - canvas.width * 0.4 - cam.x) * 0.05;
         cam.x = Math.max(0, cam.x);
+
+        const targetCamY = cy - canvas.height * 0.55;
+        cam.y += (targetCamY - cam.y) * 0.05;
+        cam.y = Math.min(canvas.height * 0.6, Math.max(-canvas.height * 1.5, cam.y));
+
         // Win
         if (!won && Math.abs(cx - goalX) < 110) {
           won = true; simMode = false; updateUI();
@@ -1064,14 +1067,14 @@
         const scx = sx * (W / 3200);
         if (scx < -2 || scx > W + 2) continue;
         ctx.fillStyle = `rgba(255,255,255,${s.b})`;
-        ctx.beginPath(); ctx.arc(scx, s.fy * gy, s.r, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(scx, s.fy * H - cam.y * 0.15, s.r, 0, Math.PI * 2); ctx.fill();
       }
 
       // Procedural Terrain Rendering
       drawTerrain();
 
       // World space
-      ctx.save(); ctx.translate(-cam.x, 0);
+      ctx.save(); ctx.translate(-cam.x, -cam.y);
 
       drawGoal();
 
@@ -1237,23 +1240,24 @@
     function drawTerrain() {
       const W = canvas.width, H = canvas.height;
       const step = 6;
-      const startX = Math.floor((cam.x - 60) / step) * step;
-      const endX = Math.ceil((cam.x + W + 60) / step) * step;
+      const startX = Math.floor((cam.x - 80) / step) * step;
+      const endX = Math.ceil((cam.x + W + 80) / step) * step;
+      const bottomY = Math.max(H + 400, cam.y + H + 500);
 
       ctx.save();
-      ctx.translate(-cam.x, 0);
+      ctx.translate(-cam.x, -cam.y);
 
       // Underground fill gradient
-      const gg = ctx.createLinearGradient(0, GY() - 100, 0, H);
-      gg.addColorStop(0, '#0e0e36'); gg.addColorStop(1, '#050518');
+      const gg = ctx.createLinearGradient(0, GY() - 300, 0, bottomY);
+      gg.addColorStop(0, '#0e0e36'); gg.addColorStop(1, '#040414');
       ctx.fillStyle = gg;
 
       ctx.beginPath();
-      ctx.moveTo(startX, H);
+      ctx.moveTo(startX, bottomY);
       for (let x = startX; x <= endX; x += step) {
         ctx.lineTo(x, getGroundY(x, curDiff));
       }
-      ctx.lineTo(endX, H);
+      ctx.lineTo(endX, bottomY);
       ctx.closePath();
       ctx.fill();
 
@@ -1261,7 +1265,7 @@
       const gs = 58;
       ctx.strokeStyle = 'rgba(65,90,210,0.09)'; ctx.lineWidth = 1;
       for (let x = Math.floor(startX / gs) * gs; x <= endX; x += gs) {
-        ctx.beginPath(); ctx.moveTo(x, getGroundY(x, curDiff)); ctx.lineTo(x, H); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x, getGroundY(x, curDiff)); ctx.lineTo(x, bottomY); ctx.stroke();
       }
 
       // Terrain glowing top edge
@@ -1331,14 +1335,15 @@
       const lv = LEVELS[lvlIdx];
       const cx = bodyNodes.reduce((s, n) => s + n.x, 0) / bodyNodes.length;
       const dist = Math.max(0, Math.floor(goalX - cx));
-      const prog = Math.min(1, Math.max(0, 1 - dist / lv.goalDist));
+      const totalGoalDist = customGoalDist || lv.goalDist;
+      const prog = Math.min(1, Math.max(0, 1 - dist / totalGoalDist));
 
       ctx.save();
       ctx.fillStyle = 'rgba(180,210,255,0.32)'; ctx.font = '12px Segoe UI'; ctx.textAlign = 'center';
       ctx.fillText(`Рівень ${lv.id} · ${lv.name}`, canvas.width / 2, 28);
 
       ctx.fillStyle = 'rgba(180,210,255,0.42)'; ctx.font = '11px Segoe UI'; ctx.textAlign = 'right';
-      ctx.fillText(`До цілі: ${dist}`, canvas.width - 20, canvas.height - 24);
+      ctx.fillText(`До цілі: ${dist}м`, canvas.width - 20, canvas.height - 24);
 
       const bw = 200, bh = 5, bx = canvas.width - 222, by = canvas.height - 16;
       ctx.fillStyle = 'rgba(255,255,255,0.06)';
@@ -1366,7 +1371,7 @@
 
     canvas.addEventListener('mousemove', e => {
       mouse.x = e.clientX; mouse.y = e.clientY;
-      mouse.wx = e.clientX + cam.x; mouse.wy = e.clientY;
+      mouse.wx = e.clientX + cam.x; mouse.wy = e.clientY + cam.y;
       hovNode = null;
 
       if (!simMode) {
@@ -1390,7 +1395,7 @@
 
     canvas.addEventListener('click', e => {
       if (simMode) return;
-      const wx = e.clientX + cam.x, wy = e.clientY;
+      const wx = e.clientX + cam.x, wy = e.clientY + cam.y;
 
       // Detach body node
       for (let i = 0; i < bodyNodes.length; i++) {
@@ -1444,6 +1449,17 @@
       });
     }
 
+    const goalSlider = document.getElementById('goal-slider');
+    const goalVal = document.getElementById('goal-val');
+
+    if (goalSlider) {
+      goalSlider.addEventListener('input', e => {
+        customGoalDist = parseInt(e.target.value, 10);
+        goalVal.textContent = `${customGoalDist}м`;
+        goalX = SX + customGoalDist;
+      });
+    }
+
     document.querySelectorAll('.mode-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
@@ -1480,7 +1496,7 @@
         const dx = SX - cx, dy = gy - 28 - cy;
         for (const n of bodyNodes) { n.x += dx; n.px = n.x; n.y += dy; n.py = n.y; }
       }
-      cam.x = 0; won = false; updateUI();
+      cam.x = 0; cam.y = 0; won = false; updateUI();
     });
 
     document.getElementById('intro-btn').addEventListener('click', hideOv);
