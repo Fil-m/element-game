@@ -404,6 +404,57 @@
       font-size: 10px;
       margin-top: 3px;
     }
+    #mode-selector {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 12px;
+    }
+
+    .mode-btn {
+      flex: 1;
+      padding: 5px 2px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.04);
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .mode-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+    }
+
+    .mode-btn.active {
+      background: linear-gradient(135deg, #172050, #2979FF);
+      border-color: rgba(80, 160, 255, 0.5);
+      color: #fff;
+      box-shadow: 0 0 10px rgba(41, 121, 255, 0.3);
+    }
+
+    .diff-control {
+      margin-bottom: 12px;
+    }
+
+    #diff-slider {
+      width: 100%;
+      accent-color: #29B6F6;
+      cursor: pointer;
+    }
+
+    .diff-info {
+      font-size: 10px;
+      color: rgba(180, 210, 255, 0.7);
+      margin-top: 3px;
+    }
+
+    #diff-val {
+      font-weight: 700;
+      color: #FFB300;
+    }
   </style>
 </head>
 
@@ -449,9 +500,26 @@
 
   <!-- Panel -->
   <div id="panel">
-    <h1>🧬 Element World</h1>
-    <p class="sub">Зберіть тіло яке само рухається</p>
+    <h1>🧬 Element World v3</h1>
+    <p class="sub">Режими елементів & рельєф</p>
     <div id="lvldots"></div>
+
+    <p class="leg-title">Режим гри (доступно елементів)</p>
+    <div id="mode-selector">
+      <button class="mode-btn active" data-mode="6">Всі (6)</button>
+      <button class="mode-btn" data-mode="5">5 Ел.</button>
+      <button class="mode-btn" data-mode="4">4 Ел.</button>
+      <button class="mode-btn" data-mode="3">3 Ел.</button>
+      <button class="mode-btn" data-mode="2">2 Ел.</button>
+    </div>
+
+    <p class="leg-title">Кривизна рельєфу (1–10)</p>
+    <div class="diff-control">
+      <input type="range" id="diff-slider" min="1" max="10" value="1" step="1">
+      <div class="diff-info">
+        <span id="diff-val">Рівень 1</span>: <span id="diff-desc">Майже пряма</span>
+      </div>
+    </div>
 
     <p class="leg-title">Елементи світу</p>
 
@@ -658,70 +726,51 @@
     let lvlIdx = 0, simMode = false, simTime = 0, cam = { x: 0 };
     let bodyNodes = [], worldNodes = [], springs = [], particles = [];
     let hovNode = null, unlocked = new Set(), goalX = 0, won = false;
+    let activeMode = 6; // 2..6 elements available
+    let curDiff = 1;    // 1 (flat) .. 10 (mountains)
 
-    // ── STARS ─────────────────────────────────────────────
-    const STARS = Array.from({ length: 210 }, () => ({
-      wx: Math.random() * 3200, fy: Math.random() * 0.75,
-      r: Math.random() * 1.7 + 0.2, b: 0.2 + Math.random() * 0.8
-    }));
+    const MODE_ELEMENTS = {
+      2: ['CONNECTOR', 'FIELD_GEN'],
+      3: ['CONNECTOR', 'FIELD_GEN', 'MUSCLE'],
+      4: ['CONNECTOR', 'FIELD_GEN', 'MUSCLE', 'ANCHOR'],
+      5: ['CONNECTOR', 'FIELD_GEN', 'MUSCLE', 'ANCHOR', 'ROTATOR'],
+      6: ['CONNECTOR', 'FIELD_GEN', 'MUSCLE', 'ANCHOR', 'ROTATOR', 'SPRING']
+    };
 
-    // ── NODE ──────────────────────────────────────────────
-    class Node {
-      constructor(x, y, type, inBody = false) {
-        this.x = x; this.y = y; this.px = x; this.py = y;
-        this.type = type; this.inBody = inBody;
-        this.r = T[type].r; this.mass = T[type].mass; this.fr = T[type].fr;
-        this.onGround = false; this.fv = 0; this.ang = 0;
-        if (type === 'FIELD_GEN') {
-          this.freq = 1.0 + Math.random() * 2.2;
-          this.fRad = 82 + Math.random() * 68;
-          this.fPh = Math.random() * Math.PI * 2;
-        }
+    const DIFF_DESCS = {
+      1: "Майже пряма", 2: "Ніжні хвилі", 3: "Легкі пагорби", 4: "Помірні підйоми",
+      5: "Відчутний рельєф", 6: "Круті схили", 7: "Глибокі западини",
+      8: "Скелястий рельєф", 9: "Високі піки", 10: "Капець гори!"
+    };
+
+    // ── PROCEDURAL TERRAIN ────────────────────────────────
+    function GY() { return canvas.height - 90; }
+
+    function getGroundY(x, diff = curDiff) {
+      const baseGY = GY();
+      if (diff <= 1) return baseGY;
+
+      const scale = (diff - 1) / 9.0;
+      let flatFactor = 1.0;
+      if (x < 480) {
+        flatFactor = Math.max(0, (x - 220) / 260);
       }
-      fieldOut(t) { return this.type !== 'FIELD_GEN' ? 0 : Math.sin(t * this.freq + this.fPh); }
+
+      const wave1 = Math.sin(x * 0.0032) * (22 * scale);
+      const wave2 = Math.sin(x * 0.0011 + 1.3) * (58 * scale);
+      const wave3 = Math.sin(x * 0.00038 - 0.6) * (115 * scale) * (Math.cos(x * 0.00075) * 0.4 + 0.6);
+
+      return baseGY - (wave1 + wave2 + wave3) * flatFactor;
     }
 
-    // ── SPRING ────────────────────────────────────────────
-    class Spring {
-      constructor(a, b) {
-        this.a = a; this.b = b;
-        this.base = Math.hypot(b.x - a.x, b.y - a.y);
-        this.rest = this.base;
-        this.k = 0.5;
-        this.isMuscle = (a.type === 'MUSCLE' || b.type === 'MUSCLE');
-        this.isSpring = (a.type === 'SPRING' || b.type === 'SPRING');
-        if (this.isSpring) this.k = 0.68;
-      }
+    function getGroundNormal(x, diff = curDiff) {
+      const eps = 1.0;
+      const y1 = getGroundY(x - eps, diff);
+      const y2 = getGroundY(x + eps, diff);
+      const slope = (y2 - y1) / (2 * eps);
+      const len = Math.hypot(-slope, 1);
+      return { nx: -slope / len, ny: 1 / len, tx: 1 / len, ty: slope / len, slope };
     }
-
-    // ── PARTICLES ─────────────────────────────────────────
-    function spawnP(x, y, col, n = 12) {
-      for (let i = 0; i < n; i++) {
-        const sp = 2 + Math.random() * 4, a = Math.random() * Math.PI * 2;
-        particles.push({
-          x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.5,
-          r: 2 + Math.random() * 3, life: 1, col
-        });
-      }
-    }
-    function tickP() {
-      for (let i = particles.length - 1; i >= 0; i--) {
-        const p = particles[i];
-        p.x += p.vx; p.y += p.vy; p.vy += 0.13; p.life -= 0.026;
-        if (p.life <= 0) particles.splice(i, 1);
-      }
-    }
-    function drawP() {
-      ctx.save(); ctx.translate(-cam.x, 0);
-      for (const p of particles) {
-        ctx.globalAlpha = p.life; ctx.fillStyle = p.col;
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2); ctx.fill();
-      }
-      ctx.globalAlpha = 1; ctx.restore();
-    }
-
-    // ── LEVEL LOAD ────────────────────────────────────────
-    function GY() { return canvas.height - 80; }
 
     function loadLevel(idx) {
       lvlIdx = idx;
@@ -730,17 +779,24 @@
       simMode = false; simTime = 0; cam.x = 0; won = false;
       goalX = SX + lv.goalDist;
 
-      unlocked = new Set(lv.unlocks);
+      unlocked = new Set(MODE_ELEMENTS[activeMode]);
       updatePanelLocks();
       updateDots();
 
-      const gy = GY();
-      const bNodes = lv.body.map(b => {
-        const n = new Node(SX + b.dx, gy + b.dy, b.t, true);
+      const startGY = getGroundY(SX, curDiff);
+      const bNodes = lv.body.filter(b => unlocked.has(b.t)).map(b => {
+        const n = new Node(SX + b.dx, startGY + b.dy, b.t, true);
         bodyNodes.push(n); return n;
       });
-      for (const [ai, bi] of lv.bsp) springs.push(new Spring(bNodes[ai], bNodes[bi]));
-      for (const w of lv.world) worldNodes.push(new Node(SX + w.dx, gy + w.dy, w.t, false));
+      for (const [ai, bi] of lv.bsp) {
+        if (bNodes[ai] && bNodes[bi]) springs.push(new Spring(bNodes[ai], bNodes[bi]));
+      }
+      for (const w of lv.world) {
+        if (unlocked.has(w.t)) {
+          const wgy = getGroundY(SX + w.dx, curDiff);
+          worldNodes.push(new Node(SX + w.dx, wgy + w.dy, w.t, false));
+        }
+      }
 
       // Intro overlay
       const ib = document.getElementById('intro-badge');
@@ -870,9 +926,14 @@
           s.b.x -= dx * diff * rb; s.b.y -= dy * diff * rb;
         }
         for (const n of all) {
+          const gy = getGroundY(n.x, curDiff);
           if (n.y + n.r >= gy) {
+            const norm = getGroundNormal(n.x, curDiff);
             n.y = gy - n.r;
-            n.x = n.px + (n.x - n.px) * n.fr;
+            const vx = n.x - n.px, vy = n.y - n.py;
+            const dotT = vx * norm.tx + vy * norm.ty;
+            n.px = n.x - (norm.tx * dotT * n.fr);
+            n.py = n.y - (norm.ty * dotT * n.fr);
             n.onGround = true;
           } else { n.onGround = false; }
           if (n.x < n.r) { n.x = n.r; n.px = n.x; }
@@ -887,10 +948,11 @@
         // Win
         if (!won && Math.abs(cx - goalX) < 110) {
           won = true; simMode = false; updateUI();
+          const goalY = getGroundY(goalX, curDiff);
           for (let i = 0; i < 6; i++) setTimeout(() => {
-            spawnP(goalX, GY() - 30, '#FFD700', 20);
-            spawnP(goalX, GY() - 30, '#FF6B6B', 12);
-            spawnP(goalX, GY() - 30, '#81D4FA', 12);
+            spawnP(goalX, goalY - 30, '#FFD700', 20);
+            spawnP(goalX, goalY - 30, '#FF6B6B', 12);
+            spawnP(goalX, goalY - 30, '#81D4FA', 12);
           }, i * 180);
           setTimeout(() => {
             document.getElementById('win-tip').textContent = LEVELS[lvlIdx].tip;
@@ -911,7 +973,7 @@
       // Sky
       const bg = ctx.createLinearGradient(0, 0, 0, gy);
       bg.addColorStop(0, '#020210'); bg.addColorStop(1, '#07092a');
-      ctx.fillStyle = bg; ctx.fillRect(0, 0, W, gy);
+      ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
 
       // Stars (parallax)
       for (const s of STARS) {
@@ -922,33 +984,13 @@
         ctx.beginPath(); ctx.arc(scx, s.fy * gy, s.r, 0, Math.PI * 2); ctx.fill();
       }
 
-      // Ground
-      const gg = ctx.createLinearGradient(0, gy, 0, H);
-      gg.addColorStop(0, '#0e0e36'); gg.addColorStop(1, '#050518');
-      ctx.fillStyle = gg; ctx.fillRect(0, gy, W, H - gy);
-
-      // Underground grid
-      ctx.save();
-      const gs = 58, go = (-cam.x) % gs;
-      ctx.strokeStyle = 'rgba(65,90,210,0.09)'; ctx.lineWidth = 1;
-      for (let x = go; x < W; x += gs) { ctx.beginPath(); ctx.moveTo(x, gy); ctx.lineTo(x, H); ctx.stroke(); }
-      for (let y = gy; y < H; y += 28) {
-        ctx.globalAlpha = 0.1 * (1 - (y - gy) / (H - gy));
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-      }
-      ctx.globalAlpha = 1; ctx.restore();
-
-      // Ground line
-      ctx.save();
-      ctx.strokeStyle = 'rgba(75,125,255,0.42)'; ctx.lineWidth = 2;
-      ctx.shadowColor = 'rgba(75,125,255,0.55)'; ctx.shadowBlur = 11;
-      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
-      ctx.restore();
+      // Procedural Terrain Rendering
+      drawTerrain();
 
       // World space
       ctx.save(); ctx.translate(-cam.x, 0);
 
-      drawGoal(gy);
+      drawGoal();
 
       // Field auras (body GEN)
       for (const n of bodyNodes) {
@@ -1109,9 +1151,55 @@
       }
     }
 
+    function drawTerrain() {
+      const W = canvas.width, H = canvas.height;
+      const startX = Math.floor((cam.x - 60) / 12) * 12;
+      const endX = Math.ceil((cam.x + W + 60) / 12) * 12;
+
+      ctx.save();
+      ctx.translate(-cam.x, 0);
+
+      // Underground fill gradient
+      const gg = ctx.createLinearGradient(0, GY() - 100, 0, H);
+      gg.addColorStop(0, '#0e0e36'); gg.addColorStop(1, '#050518');
+      ctx.fillStyle = gg;
+
+      ctx.beginPath();
+      ctx.moveTo(startX, H);
+      for (let x = startX; x <= endX; x += 12) {
+        ctx.lineTo(x, getGroundY(x, curDiff));
+      }
+      ctx.lineTo(endX, H);
+      ctx.closePath();
+      ctx.fill();
+
+      // Underground grid lines
+      const gs = 58;
+      ctx.strokeStyle = 'rgba(65,90,210,0.09)'; ctx.lineWidth = 1;
+      for (let x = Math.floor(startX / gs) * gs; x <= endX; x += gs) {
+        ctx.beginPath(); ctx.moveTo(x, getGroundY(x, curDiff)); ctx.lineTo(x, H); ctx.stroke();
+      }
+
+      // Terrain glowing top edge
+      ctx.strokeStyle = 'rgba(75,125,255,0.68)';
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = 'rgba(75,125,255,0.75)';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      let first = true;
+      for (let x = startX; x <= endX; x += 10) {
+        const gy = getGroundY(x, curDiff);
+        if (first) { ctx.moveTo(x, gy); first = false; }
+        else ctx.lineTo(x, gy);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+
     // ── GOAL ──────────────────────────────────────────────
-    function drawGoal(gy) {
-      const gx = goalX, t = simTime * 2.6;
+    function drawGoal() {
+      const gx = goalX, gy = getGroundY(goalX, curDiff), t = simTime * 2.6;
 
       // Ground glow
       const cg = ctx.createRadialGradient(gx, gy, 0, gx, gy, 120);
@@ -1259,6 +1347,28 @@
       }
     });
 
+    // ── TERRAIN & MODE CONTROLS ───────────────────────────
+    const diffSlider = document.getElementById('diff-slider');
+    const diffVal = document.getElementById('diff-val');
+    const diffDesc = document.getElementById('diff-desc');
+
+    if (diffSlider) {
+      diffSlider.addEventListener('input', e => {
+        curDiff = parseInt(e.target.value, 10);
+        diffVal.textContent = `Рівень ${curDiff}`;
+        diffDesc.textContent = DIFF_DESCS[curDiff] || '';
+      });
+    }
+
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        activeMode = parseInt(btn.dataset.mode, 10);
+        loadLevel(lvlIdx);
+      });
+    });
+
     // ── UI ────────────────────────────────────────────────
     const simBtn = document.getElementById('sim-btn');
     const di = document.getElementById('di');
@@ -1279,7 +1389,7 @@
 
     document.getElementById('reset-btn').addEventListener('click', () => {
       simMode = false; simTime = 0;
-      const gy = GY();
+      const gy = getGroundY(SX, curDiff);
       if (bodyNodes.length > 0) {
         const cx = bodyNodes.reduce((s, n) => s + n.x, 0) / bodyNodes.length;
         const cy = bodyNodes.reduce((s, n) => s + n.y, 0) / bodyNodes.length;
