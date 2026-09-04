@@ -743,6 +743,67 @@
       8: "Скелястий рельєф", 9: "Високі піки", 10: "Капець гори!"
     };
 
+    // ── STARS ─────────────────────────────────────────────
+    const STARS = Array.from({ length: 210 }, () => ({
+      wx: Math.random() * 3200, fy: Math.random() * 0.75,
+      r: Math.random() * 1.7 + 0.2, b: 0.2 + Math.random() * 0.8
+    }));
+
+    // ── GAME NODE ─────────────────────────────────────────
+    class GameNode {
+      constructor(x, y, type, inBody = false) {
+        this.x = x; this.y = y; this.px = x; this.py = y;
+        this.type = type; this.inBody = inBody;
+        this.r = T[type].r; this.mass = T[type].mass; this.fr = T[type].fr;
+        this.onGround = false; this.fv = 0; this.ang = 0;
+        if (type === 'FIELD_GEN') {
+          this.freq = 1.0 + Math.random() * 2.2;
+          this.fRad = 82 + Math.random() * 68;
+          this.fPh = Math.random() * Math.PI * 2;
+        }
+      }
+      fieldOut(t) { return this.type !== 'FIELD_GEN' ? 0 : Math.sin(t * this.freq + this.fPh); }
+    }
+
+    // ── SPRING ────────────────────────────────────────────
+    class Spring {
+      constructor(a, b) {
+        this.a = a; this.b = b;
+        this.base = Math.hypot(b.x - a.x, b.y - a.y);
+        this.rest = this.base;
+        this.k = 0.5;
+        this.isMuscle = (a.type === 'MUSCLE' || b.type === 'MUSCLE');
+        this.isSpring = (a.type === 'SPRING' || b.type === 'SPRING');
+        if (this.isSpring) this.k = 0.68;
+      }
+    }
+
+    // ── PARTICLES ─────────────────────────────────────────
+    function spawnP(x, y, col, n = 12) {
+      for (let i = 0; i < n; i++) {
+        const sp = 2 + Math.random() * 4, a = Math.random() * Math.PI * 2;
+        particles.push({
+          x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.5,
+          r: 2 + Math.random() * 3, life: 1, col
+        });
+      }
+    }
+    function tickP() {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx; p.y += p.vy; p.vy += 0.13; p.life -= 0.026;
+        if (p.life <= 0) particles.splice(i, 1);
+      }
+    }
+    function drawP() {
+      ctx.save(); ctx.translate(-cam.x, 0);
+      for (const p of particles) {
+        ctx.globalAlpha = p.life; ctx.fillStyle = p.col;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1; ctx.restore();
+    }
+
     // ── PROCEDURAL TERRAIN ────────────────────────────────
     function GY() { return canvas.height - 90; }
 
@@ -785,7 +846,7 @@
 
       const startGY = getGroundY(SX, curDiff);
       const bNodes = lv.body.filter(b => unlocked.has(b.t)).map(b => {
-        const n = new Node(SX + b.dx, startGY + b.dy, b.t, true);
+        const n = new GameNode(SX + b.dx, startGY + b.dy, b.t, true);
         bodyNodes.push(n); return n;
       });
       for (const [ai, bi] of lv.bsp) {
@@ -794,7 +855,7 @@
       for (const w of lv.world) {
         if (unlocked.has(w.t)) {
           const wgy = getGroundY(SX + w.dx, curDiff);
-          worldNodes.push(new Node(SX + w.dx, wgy + w.dy, w.t, false));
+          worldNodes.push(new GameNode(SX + w.dx, wgy + w.dy, w.t, false));
         }
       }
 
