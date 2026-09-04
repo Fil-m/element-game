@@ -2,7 +2,7 @@
 <html lang="uk">
 
 <head>
-  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Element World</title>
   <style>
     * {
@@ -14,11 +14,96 @@
     body {
       background: #03030e;
       overflow: hidden;
-      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      touch-action: none;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
     }
 
     canvas {
       display: block;
+      touch-action: none;
+    }
+
+    /* ── MOBILE BAR & FLOATING TOGGLE ────────────── */
+    #mobile-bar {
+      display: none;
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 90;
+      background: rgba(6, 6, 20, 0.94);
+      border: 1px solid rgba(100, 160, 255, 0.25);
+      border-radius: 20px;
+      padding: 6px 12px;
+      gap: 8px;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    }
+
+    .mbtn {
+      padding: 8px 14px;
+      border: none;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      color: #fff;
+      background: linear-gradient(135deg, #172050, #274888);
+      border: 1px solid rgba(80, 160, 255, 0.3);
+      transition: all 0.2s;
+    }
+
+    .mbtn.active {
+      background: linear-gradient(135deg, #501515, #802525);
+      border-color: rgba(255, 80, 80, 0.3);
+    }
+
+    .mbtn.icon {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.15);
+      padding: 8px 12px;
+    }
+
+    /* ── RESPONSIVE PANEL & OVERLAYS ────────────────── */
+    @media (max-width: 768px), (max-height: 550px) {
+      #mobile-bar {
+        display: flex;
+      }
+
+      #panel {
+        top: 12px !important;
+        left: 12px !important;
+        right: 12px !important;
+        width: auto !important;
+        max-width: 400px;
+        max-height: 75vh;
+        overflow-y: auto;
+        transform: translateY(-140%);
+        transition: transform 0.35s cubic-bezier(0.1, 0.9, 0.2, 1);
+        z-index: 95;
+      }
+
+      #panel.open {
+        transform: translateY(0);
+      }
+
+      .overlay-box {
+        padding: 24px 20px;
+        max-height: 88vh;
+        overflow-y: auto;
+      }
+
+      .overlay-box h2 {
+        font-size: 20px;
+      }
+
+      .win-icon {
+        font-size: 40px;
+        margin-bottom: 6px;
+      }
     }
 
     /* ── OVERLAYS ─────────────────────────────────── */
@@ -587,11 +672,18 @@
       <span id="stxt">Режим: Будівництво</span>
     </div>
     <div id="hint">
-      <b>ЛКМ</b> на вузол → додати до тіла<br>
-      <b>ЛКМ</b> на тіло → відокремити<br>
+      <b>ЛКМ / Тап</b> на вузол → додати<br>
+      <b>ЛКМ / Тап</b> на тіло → відокремити<br>
       <b>Пробіл</b> → запуск / зупинка<br>
       <b>R</b> → скинути позицію
     </div>
+  </div>
+
+  <!-- Mobile Bar -->
+  <div id="mobile-bar">
+    <button class="mbtn" id="m-sim-btn">▶ Симуляція</button>
+    <button class="mbtn icon" id="m-reset-btn" title="Скинути">↺</button>
+    <button class="mbtn icon" id="m-panel-btn" title="Панель">⚙️ Панель</button>
   </div>
 
   <div id="tip">
@@ -1393,20 +1485,24 @@
     });
     canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
 
-    canvas.addEventListener('click', e => {
+    // ── UNIFIED CLICK & TOUCH INTERACTION ──────────────────
+    function handleInteraction(clientX, clientY) {
       if (simMode) return;
-      const wx = e.clientX + cam.x, wy = e.clientY + cam.y;
+      const rect = canvas.getBoundingClientRect();
+      const cx = clientX - rect.left;
+      const cy = clientY - rect.top;
+      const wx = cx + cam.x, wy = cy + cam.y;
 
       // Detach body node
       for (let i = 0; i < bodyNodes.length; i++) {
         const n = bodyNodes[i];
-        if (Math.hypot(n.x - wx, n.y - wy) < n.r + 6) {
+        if (Math.hypot(n.x - wx, n.y - wy) < n.r + 14) {
           if (bodyNodes.length <= 1) return;
           n.inBody = false; bodyNodes.splice(i, 1); worldNodes.push(n);
           for (let j = springs.length - 1; j >= 0; j--) {
             if (springs[j].a === n || springs[j].b === n) springs.splice(j, 1);
           }
-          spawnP(n.x, n.y, T[n.type].glow, 8);
+          spawnP(n.x, n.y, T[n.type].glow, 10);
           hovNode = null; return;
         }
       }
@@ -1414,7 +1510,7 @@
       // Attach world node
       for (let i = 0; i < worldNodes.length; i++) {
         const n = worldNodes[i];
-        if (Math.hypot(n.x - wx, n.y - wy) < n.r + 8) {
+        if (Math.hypot(n.x - wx, n.y - wy) < n.r + 16) {
           let nearest = null, nd = Infinity;
           for (const b of bodyNodes) { const d = Math.hypot(b.x - n.x, b.y - n.y); if (d < nd) { nd = d; nearest = b; } }
           if (!nearest) return;
@@ -1434,7 +1530,24 @@
           hovNode = null; return;
         }
       }
-    });
+    }
+
+    canvas.addEventListener('click', e => handleInteraction(e.clientX, e.clientY));
+
+    canvas.addEventListener('touchstart', e => {
+      if (e.touches.length > 0) {
+        handleInteraction(e.touches[0].clientX, e.touches[0].clientY);
+      }
+    }, { passive: true });
+
+    canvas.addEventListener('touchmove', e => {
+      if (e.touches.length > 0) {
+        const t = e.touches[0];
+        const rect = canvas.getBoundingClientRect();
+        mouse.x = t.clientX - rect.left; mouse.y = t.clientY - rect.top;
+        mouse.wx = mouse.x + cam.x; mouse.wy = mouse.y + cam.y;
+      }
+    }, { passive: true });
 
     // ── TERRAIN & MODE CONTROLS ───────────────────────────
     const diffSlider = document.getElementById('diff-slider');
@@ -1473,19 +1586,26 @@
     const simBtn = document.getElementById('sim-btn');
     const di = document.getElementById('di');
     const stxt = document.getElementById('stxt');
+    const panelEl = document.getElementById('panel');
+    const mSimBtn = document.getElementById('m-sim-btn');
+    const mResetBtn = document.getElementById('m-reset-btn');
+    const mPanelBtn = document.getElementById('m-panel-btn');
 
     function updateUI() {
       if (simMode) {
         simBtn.textContent = '⏹  Зупинити'; simBtn.classList.add('active');
+        if (mSimBtn) { mSimBtn.textContent = '⏹  Зупинити'; mSimBtn.classList.add('active'); }
         di.classList.add('sim'); stxt.textContent = 'Режим: Симуляція ▶';
       } else {
         simBtn.textContent = '▶  Симулювати'; simBtn.classList.remove('active');
+        if (mSimBtn) { mSimBtn.textContent = '▶  Симуляція'; mSimBtn.classList.remove('active'); }
         di.classList.remove('sim'); stxt.textContent = 'Режим: Будівництво';
       }
     }
     function toggleSim() { if (!won) { simMode = !simMode; updateUI(); } }
 
     simBtn.addEventListener('click', toggleSim);
+    if (mSimBtn) mSimBtn.addEventListener('click', toggleSim);
 
     document.getElementById('reset-btn').addEventListener('click', () => {
       simMode = false; simTime = 0;
@@ -1498,6 +1618,9 @@
       }
       cam.x = 0; cam.y = 0; won = false; updateUI();
     });
+
+    if (mResetBtn) mResetBtn.addEventListener('click', () => document.getElementById('reset-btn').click());
+    if (mPanelBtn) mPanelBtn.addEventListener('click', () => panelEl.classList.toggle('open'));
 
     document.getElementById('intro-btn').addEventListener('click', hideOv);
 
