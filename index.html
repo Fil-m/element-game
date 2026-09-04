@@ -811,17 +811,39 @@
       const baseGY = GY();
       if (diff <= 1) return baseGY;
 
-      const scale = (diff - 1) / 9.0;
+      // Exponential scaling so higher levels (7-10) escalate into steep mountains
+      const normDiff = (diff - 1) / 9.0;
+      const scale = Math.pow(normDiff, 1.25);
+
+      // Safe flat zone for initial body assembly
       let flatFactor = 1.0;
-      if (x < 480) {
-        flatFactor = Math.max(0, (x - 220) / 260);
+      if (x < 420) {
+        const raw = Math.max(0, (x - 200) / 220);
+        flatFactor = raw * raw; // smooth cubic easing
       }
 
-      const wave1 = Math.sin(x * 0.0032) * (22 * scale);
-      const wave2 = Math.sin(x * 0.0011 + 1.3) * (58 * scale);
-      const wave3 = Math.sin(x * 0.00038 - 0.6) * (115 * scale) * (Math.cos(x * 0.00075) * 0.4 + 0.6);
+      // Multi-octave terrain waves:
+      // 1. Large mountain elevations
+      const mountain = Math.sin(x * 0.0012 - 0.8) * (180 * scale);
+      
+      // 2. Steep rolling hills & valleys
+      const hill = Math.sin(x * 0.0038 + 1.4) * (115 * scale);
 
-      return baseGY - (wave1 + wave2 + wave3) * flatFactor;
+      // 3. Sharp ridges & jagged peaks
+      const ridge = Math.abs(Math.sin(x * 0.009 + 0.6)) * (-85 * scale);
+
+      // 4. Fine surface roughness
+      const roughness = Math.cos(x * 0.022) * (25 * scale);
+
+      // 5. Deep canyons & high cliffs at difficulty >= 5
+      const canyonScale = Math.max(0, (diff - 4) / 6.0);
+      const canyon = Math.sin(x * 0.0022 + 2.8) * (110 * canyonScale);
+
+      const totalOffset = (mountain + hill + ridge + roughness + canyon) * flatFactor;
+
+      const minY = 110;
+      const maxY = canvas.height - 45;
+      return Math.max(minY, Math.min(maxY, baseGY - totalOffset));
     }
 
     function getGroundNormal(x, diff = curDiff) {
@@ -1214,8 +1236,9 @@
 
     function drawTerrain() {
       const W = canvas.width, H = canvas.height;
-      const startX = Math.floor((cam.x - 60) / 12) * 12;
-      const endX = Math.ceil((cam.x + W + 60) / 12) * 12;
+      const step = 6;
+      const startX = Math.floor((cam.x - 60) / step) * step;
+      const endX = Math.ceil((cam.x + W + 60) / step) * step;
 
       ctx.save();
       ctx.translate(-cam.x, 0);
@@ -1227,7 +1250,7 @@
 
       ctx.beginPath();
       ctx.moveTo(startX, H);
-      for (let x = startX; x <= endX; x += 12) {
+      for (let x = startX; x <= endX; x += step) {
         ctx.lineTo(x, getGroundY(x, curDiff));
       }
       ctx.lineTo(endX, H);
@@ -1242,13 +1265,13 @@
       }
 
       // Terrain glowing top edge
-      ctx.strokeStyle = 'rgba(75,125,255,0.68)';
+      ctx.strokeStyle = 'rgba(75,125,255,0.78)';
       ctx.lineWidth = 2.5;
-      ctx.shadowColor = 'rgba(75,125,255,0.75)';
+      ctx.shadowColor = 'rgba(75,125,255,0.85)';
       ctx.shadowBlur = 12;
       ctx.beginPath();
       let first = true;
-      for (let x = startX; x <= endX; x += 10) {
+      for (let x = startX; x <= endX; x += step) {
         const gy = getGroundY(x, curDiff);
         if (first) { ctx.moveTo(x, gy); first = false; }
         else ctx.lineTo(x, gy);
