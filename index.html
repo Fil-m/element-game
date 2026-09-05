@@ -67,8 +67,98 @@
       padding: 8px 12px;
     }
 
+    /* ── CAMERA CONTROLS ───────────────────────────── */
+    #cam-controls {
+      position: fixed;
+      right: 16px;
+      top: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 88;
+    }
+
+    .cambtn {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background: rgba(6, 6, 20, 0.88);
+      border: 1px solid rgba(100, 160, 255, 0.3);
+      color: #fff;
+      font-size: 18px;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+      transition: transform 0.15s, background 0.2s;
+    }
+
+    .cambtn:active {
+      transform: scale(0.9);
+      background: rgba(40, 90, 200, 0.8);
+    }
+
+    /* ── ELEMENT PALETTE BAR ───────────────────────── */
+    #element-palette {
+      position: fixed;
+      bottom: 72px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      z-index: 89;
+      background: rgba(6, 6, 20, 0.94);
+      border: 1px solid rgba(100, 160, 255, 0.25);
+      border-radius: 20px;
+      padding: 6px 12px;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+      max-width: 95vw;
+      overflow-x: auto;
+    }
+
+    .palette-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      cursor: pointer;
+      transition: all 0.2s;
+      min-width: 58px;
+    }
+
+    .palette-item:hover,
+    .palette-item:active {
+      background: rgba(80, 160, 255, 0.2);
+      border-color: rgba(100, 180, 255, 0.5);
+      transform: translateY(-2px);
+    }
+
+    .palette-dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      margin-bottom: 3px;
+    }
+
+    .palette-lbl {
+      font-size: 10px;
+      font-weight: 700;
+      color: #d0e4ff;
+      white-space: nowrap;
+    }
+
     /* ── RESPONSIVE PANEL & OVERLAYS ────────────────── */
     @media (max-width: 768px), (max-height: 550px) {
+      #element-palette {
+        bottom: 68px;
+      }
       #mobile-bar {
         display: flex;
       }
@@ -672,12 +762,22 @@
       <span id="stxt">Режим: Будівництво</span>
     </div>
     <div id="hint">
-      <b>ЛКМ / Тап</b> на вузол → додати<br>
-      <b>ЛКМ / Тап</b> на тіло → відокремити<br>
-      <b>Пробіл</b> → запуск / зупинка<br>
-      <b>R</b> → скинути позицію
+      <b>Перетягування</b> → рухати вузол<br>
+      <b>Тап / Клік</b> → приєднати / від'єднати<br>
+      <b>2 пальці / Колесо</b> → зум камери<br>
+      <b>Вільне поле</b> → рухати камеру
     </div>
   </div>
+
+  <!-- Floating Camera Controls -->
+  <div id="cam-controls">
+    <button class="cambtn" id="zoom-in" title="Наблизити">+</button>
+    <button class="cambtn" id="zoom-out" title="Віддалити">−</button>
+    <button class="cambtn" id="cam-center" title="Центрувати">🎯</button>
+  </div>
+
+  <!-- Mobile Element Palette -->
+  <div id="element-palette"></div>
 
   <!-- Mobile Bar -->
   <div id="mobile-bar">
@@ -823,12 +923,23 @@
     ];
 
     // ── STATE ─────────────────────────────────────────────
-    let lvlIdx = 0, simMode = false, simTime = 0, cam = { x: 0, y: 0 };
+    let lvlIdx = 0, simMode = false, simTime = 0;
+    let cam = { x: 0, y: 0, zoom: 1.0 };
     let bodyNodes = [], worldNodes = [], springs = [], particles = [];
     let hovNode = null, unlocked = new Set(), goalX = 0, won = false;
     let activeMode = 6; // 2..6 elements available
     let curDiff = 1;    // 1 (flat) .. 10 (mountains)
     let customGoalDist = 1000;
+
+    // Touch & Drag Interaction State
+    let draggingNode = null;
+    let dragOffset = { x: 0, y: 0 };
+    let liveSpringPreviews = [];
+    let isPanning = false;
+    let panStart = { x: 0, y: 0, camX: 0, camY: 0 };
+    let isPinching = false;
+    let initialPinchDist = 0;
+    let initialZoom = 1.0;
 
     const MODE_ELEMENTS = {
       2: ['CONNECTOR', 'FIELD_GEN'],
@@ -849,6 +960,13 @@
       wx: Math.random() * 3200, fy: Math.random() * 0.75,
       r: Math.random() * 1.7 + 0.2, b: 0.2 + Math.random() * 0.8
     }));
+
+    // ── COORDINATE TRANSFORMS ──────────────────────────────
+    function screenToWorld(sx, sy) {
+      const wx = (sx - canvas.width * 0.5) / cam.zoom + canvas.width * 0.5 + cam.x;
+      const wy = (sy - canvas.height * 0.5) / cam.zoom + canvas.height * 0.5 + cam.y;
+      return { x: wx, y: wy };
+    }
 
     // ── GAME NODE ─────────────────────────────────────────
     class GameNode {
@@ -897,7 +1015,10 @@
       }
     }
     function drawP() {
-      ctx.save(); ctx.translate(-cam.x, -cam.y);
+      ctx.save();
+      ctx.translate(canvas.width * 0.5, canvas.height * 0.5);
+      ctx.scale(cam.zoom, cam.zoom);
+      ctx.translate(-canvas.width * 0.5 - cam.x, -canvas.height * 0.5 - cam.y);
       for (const p of particles) {
         ctx.globalAlpha = p.life; ctx.fillStyle = p.col;
         ctx.beginPath(); ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2); ctx.fill();
@@ -921,7 +1042,6 @@
         flatFactor = raw * raw;
       }
 
-      // Multi-octave terrain waves centered around baseGY so peaks rise and valleys drop naturally
       const mountain = Math.sin(x * 0.0011 - 0.7) * (220 * scale);
       const hill = Math.sin(x * 0.0036 + 1.2) * (120 * scale);
       const ridge = Math.abs(Math.sin(x * 0.0085 + 0.5)) * (-90 * scale);
@@ -947,12 +1067,14 @@
       lvlIdx = idx;
       const lv = LEVELS[idx];
       bodyNodes = []; worldNodes = []; springs = []; particles = [];
-      simMode = false; simTime = 0; cam.x = 0; cam.y = 0; won = false;
+      simMode = false; simTime = 0; cam.x = 0; cam.y = 0; cam.zoom = 1.0; won = false;
+      draggingNode = null; liveSpringPreviews = [];
       goalX = SX + (customGoalDist || lv.goalDist);
 
       unlocked = new Set(MODE_ELEMENTS[activeMode]);
       updatePanelLocks();
       updateDots();
+      updateElementPalette();
 
       const startGY = getGroundY(SX, curDiff);
       const bNodes = lv.body.filter(b => unlocked.has(b.t)).map(b => {
@@ -988,6 +1110,37 @@
       updateUI();
     }
 
+    function updateElementPalette() {
+      const pal = document.getElementById('element-palette');
+      if (!pal) return;
+      pal.innerHTML = '';
+      for (const type of Object.keys(T)) {
+        if (!unlocked.has(type)) continue;
+        const td = T[type];
+        const item = document.createElement('div');
+        item.className = 'palette-item';
+        item.innerHTML = `<div class="palette-dot" style="background:${td.color};box-shadow:0 0 8px ${td.glow}"></div><div class="palette-lbl">${td.label}</div>`;
+        item.addEventListener('pointerdown', (e) => {
+          e.stopPropagation();
+          spawnNewNodeFromPalette(type, e.clientX, e.clientY);
+        });
+        pal.appendChild(item);
+      }
+    }
+
+    function spawnNewNodeFromPalette(type, screenX, screenY) {
+      if (!unlocked.has(type)) return;
+      const pos = screenToWorld(screenX || canvas.width * 0.5, screenY || canvas.height * 0.45);
+      const n = new GameNode(pos.x, pos.y, type, false);
+      worldNodes.push(n);
+      resolveNodeCollisions(worldNodes, 12);
+      spawnP(n.x, n.y, T[type].glow, 16);
+
+      // Auto-select for dragging
+      draggingNode = n;
+      dragOffset = { x: 0, y: 0 };
+    }
+
     function updatePanelLocks() {
       for (const type of Object.keys(T)) {
         const el = document.getElementById(`ni-${type}`);
@@ -1005,6 +1158,7 @@
           if (lk) lk.style.display = 'block';
         }
       }
+      updateElementPalette();
     }
 
     function updateDots() {
@@ -1026,11 +1180,45 @@
       document.querySelectorAll('.overlay').forEach(o => o.classList.remove('show'));
     }
 
-    // ── PHYSICS ───────────────────────────────────────────
+    // ── PHYSICS & NODE COLLISION SOLVER ────────────────────
     const GRAV = 0.28, DAMP = 0.984, CI = 14;
 
+    function resolveNodeCollisions(nodes, gap = 4) {
+      for (let i = 0; i < nodes.length; i++) {
+        const a = nodes[i];
+        for (let j = i + 1; j < nodes.length; j++) {
+          const b = nodes[j];
+          let dx = b.x - a.x;
+          let dy = b.y - a.y;
+          let dist = Math.hypot(dx, dy);
+          const minDist = a.r + b.r + gap;
+          if (dist < minDist) {
+            if (dist === 0) {
+              dx = (Math.random() - 0.5) * 0.2;
+              dy = (Math.random() - 0.5) * 0.2;
+              dist = Math.hypot(dx, dy) || 0.1;
+            }
+            const overlap = minDist - dist;
+            const nx = dx / dist, ny = dy / dist;
+            const tm = a.mass + b.mass;
+            const ra = b.mass / tm;
+            const rb = a.mass / tm;
+            a.x -= nx * overlap * ra * 1.2;
+            a.y -= ny * overlap * ra * 1.2;
+            b.x += nx * overlap * rb * 1.2;
+            b.y += ny * overlap * rb * 1.2;
+          }
+        }
+      }
+    }
+
     function stepPhysics() {
-      if (!simMode) return;
+      if (!simMode) {
+        // Enforce physical separation in build mode so nodes never overlap
+        resolveNodeCollisions(bodyNodes, 2);
+        resolveNodeCollisions(worldNodes, 6);
+        return;
+      }
       simTime += 0.016;
 
       const gy = GY(), all = bodyNodes;
@@ -1052,11 +1240,9 @@
         if (!s.isMuscle && !s.isSpring) continue;
         const avg = (s.a.fv + s.b.fv) * 0.5;
         if (s.isSpring) {
-          // Bidirectional, stronger
           const f = 1.0 - avg * 0.68;
           s.rest = Math.max(s.base * 0.16, Math.min(s.base * 1.75, s.base * f));
         } else {
-          // Muscle: mainly contracts
           s.rest = Math.max(s.base * 0.28, s.base * (1.0 - avg * 0.48));
         }
       }
@@ -1078,7 +1264,7 @@
         }
       }
 
-      // Verlet
+      // Verlet integration
       for (const n of all) {
         const vx = (n.x - n.px) * DAMP, vy = (n.y - n.py) * DAMP;
         n.px = n.x; n.py = n.y;
@@ -1087,6 +1273,7 @@
 
       // Constraints
       for (let it = 0; it < CI; it++) {
+        // Springs
         for (const s of springs) {
           const dx = s.b.x - s.a.x, dy = s.b.y - s.a.y;
           const dist = Math.hypot(dx, dy) || 1e-6;
@@ -1096,6 +1283,10 @@
           s.a.x += dx * diff * ra; s.a.y += dy * diff * ra;
           s.b.x -= dx * diff * rb; s.b.y -= dy * diff * rb;
         }
+        // Rigid Node-to-Node Collisions (prevents stacking)
+        resolveNodeCollisions(all, 4);
+
+        // Ground constraints
         for (const n of all) {
           const gy = getGroundY(n.x, curDiff);
           if (n.y + n.r >= gy) {
@@ -1111,7 +1302,7 @@
         }
       }
 
-      // Camera
+      // Smooth Camera tracking
       if (all.length > 0) {
         const cx = all.reduce((s, n) => s + n.x, 0) / all.length;
         const cy = all.reduce((s, n) => s + n.y, 0) / all.length;
@@ -1123,7 +1314,7 @@
         cam.y += (targetCamY - cam.y) * 0.05;
         cam.y = Math.min(canvas.height * 0.6, Math.max(-canvas.height * 1.5, cam.y));
 
-        // Win
+        // Win check
         if (!won && Math.abs(cx - goalX) < 110) {
           won = true; simMode = false; updateUI();
           const goalY = getGroundY(goalX, curDiff);
@@ -1162,11 +1353,14 @@
         ctx.beginPath(); ctx.arc(scx, s.fy * H - cam.y * 0.15, s.r, 0, Math.PI * 2); ctx.fill();
       }
 
-      // Procedural Terrain Rendering
+      // Procedural Terrain
       drawTerrain();
 
-      // World space
-      ctx.save(); ctx.translate(-cam.x, -cam.y);
+      // World Space Matrix Transform with Zoom
+      ctx.save();
+      ctx.translate(W * 0.5, H * 0.5);
+      ctx.scale(cam.zoom, cam.zoom);
+      ctx.translate(-W * 0.5 - cam.x, -H * 0.5 - cam.y);
 
       drawGoal();
 
@@ -1194,12 +1388,29 @@
         ctx.fillStyle = ag; ctx.beginPath(); ctx.arc(n.x, n.y, n.fRad, 0, Math.PI * 2); ctx.fill();
       }
 
+      // Live Spring Previews while Dragging Node
+      if (draggingNode && liveSpringPreviews.length > 0) {
+        for (const candidate of liveSpringPreviews) {
+          ctx.save();
+          ctx.strokeStyle = '#29B6F6';
+          ctx.lineWidth = 2.5;
+          ctx.shadowColor = '#29B6F6';
+          ctx.shadowBlur = 14;
+          ctx.setLineDash([6, 8]);
+          ctx.lineDashOffset = -simTime * 36;
+          ctx.beginPath();
+          ctx.moveTo(draggingNode.x, draggingNode.y);
+          ctx.lineTo(candidate.x, candidate.y);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
       // Springs
       for (const s of springs) {
         const ctr = (s.isMuscle || s.isSpring) && simMode ? Math.max(0, 1 - s.rest / s.base) : 0;
         const ext = s.isSpring && simMode ? Math.max(0, s.rest / s.base - 1) : 0;
         if (s.isSpring) {
-          // Zigzag spring visual
           ctx.strokeStyle = ctr > 0
             ? `rgba(241,248,233,${0.4 + ctr * 0.6})`
             : `rgba(160,230,120,${0.35 + ext * 0.55})`;
@@ -1245,7 +1456,7 @@
 
     // ── DRAW NODE ─────────────────────────────────────────
     function drawNode(n) {
-      const td = T[n.type], hov = n === hovNode, inB = n.inBody;
+      const td = T[n.type], hov = n === hovNode || n === draggingNode, inB = n.inBody;
 
       // Glow halo
       const gr = n.r * (inB ? (hov ? 3.2 : 2.4) : (hov ? 2.8 : 1.6));
@@ -1277,7 +1488,6 @@
         for (let i = 0; i < 3; i++) {
           ctx.rotate(Math.PI * 2 / 3);
           ctx.beginPath(); ctx.arc(0, 0, n.r * 0.65, 0.2, 1.4); ctx.stroke();
-          // Arrowhead
           const ex = Math.cos(1.4) * n.r * 0.65, ey = Math.sin(1.4) * n.r * 0.65;
           ctx.beginPath();
           ctx.moveTo(ex + Math.cos(1.4 + 2.4) * 3, ey + Math.sin(1.4 + 2.4) * 3);
@@ -1332,12 +1542,14 @@
     function drawTerrain() {
       const W = canvas.width, H = canvas.height;
       const step = 6;
-      const startX = Math.floor((cam.x - 80) / step) * step;
-      const endX = Math.ceil((cam.x + W + 80) / step) * step;
+      const startX = Math.floor((cam.x - 120) / step) * step;
+      const endX = Math.ceil((cam.x + W + 120) / step) * step;
       const bottomY = Math.max(H + 400, cam.y + H + 500);
 
       ctx.save();
-      ctx.translate(-cam.x, -cam.y);
+      ctx.translate(W * 0.5, H * 0.5);
+      ctx.scale(cam.zoom, cam.zoom);
+      ctx.translate(-W * 0.5 - cam.x, -H * 0.5 - cam.y);
 
       // Underground fill gradient
       const gg = ctx.createLinearGradient(0, GY() - 300, 0, bottomY);
@@ -1457,97 +1669,200 @@
       return `rgba(${r},${g},${b},${a})`;
     }
 
-    // ── MOUSE ─────────────────────────────────────────────
+    // ── UNIFIED TOUCH & MOUSE INTERACTION ENGINE ──────────
     const mouse = { x: 0, y: 0, wx: 0, wy: 0 };
     const tip = document.getElementById('tip');
 
-    canvas.addEventListener('mousemove', e => {
-      mouse.x = e.clientX; mouse.y = e.clientY;
-      mouse.wx = e.clientX + cam.x; mouse.wy = e.clientY + cam.y;
-      hovNode = null;
-
-      if (!simMode) {
-        for (const n of bodyNodes) { if (Math.hypot(n.x - mouse.wx, n.y - mouse.wy) < n.r + 6) { hovNode = n; break; } }
-        if (!hovNode) for (const n of worldNodes) { if (Math.hypot(n.x - mouse.wx, n.y - mouse.wy) < n.r + 8) { hovNode = n; break; } }
-      }
-
-      if (hovNode && !simMode) {
-        const td = T[hovNode.type];
-        document.getElementById('tn').textContent = td.label;
-        document.getElementById('td').textContent = td.desc;
-        document.getElementById('ta').textContent = hovNode.inBody ? '← ЛКМ: відокремити' : '→ ЛКМ: додати до тіла';
-        tip.style.cssText = `display:block;left:${e.clientX + 14}px;top:${e.clientY - 10}px`;
-        canvas.style.cursor = 'pointer';
+    function updateLiveSpringPreviews() {
+      if (!draggingNode) { liveSpringPreviews = []; return; }
+      if (draggingNode.inBody) {
+        liveSpringPreviews = [];
       } else {
-        tip.style.display = 'none';
-        canvas.style.cursor = simMode ? 'default' : 'crosshair';
-      }
-    });
-    canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
-
-    // ── UNIFIED CLICK & TOUCH INTERACTION ──────────────────
-    function handleInteraction(clientX, clientY) {
-      if (simMode) return;
-      const rect = canvas.getBoundingClientRect();
-      const cx = clientX - rect.left;
-      const cy = clientY - rect.top;
-      const wx = cx + cam.x, wy = cy + cam.y;
-
-      // Detach body node
-      for (let i = 0; i < bodyNodes.length; i++) {
-        const n = bodyNodes[i];
-        if (Math.hypot(n.x - wx, n.y - wy) < n.r + 14) {
-          if (bodyNodes.length <= 1) return;
-          n.inBody = false; bodyNodes.splice(i, 1); worldNodes.push(n);
-          for (let j = springs.length - 1; j >= 0; j--) {
-            if (springs[j].a === n || springs[j].b === n) springs.splice(j, 1);
-          }
-          spawnP(n.x, n.y, T[n.type].glow, 10);
-          hovNode = null; return;
-        }
-      }
-
-      // Attach world node
-      for (let i = 0; i < worldNodes.length; i++) {
-        const n = worldNodes[i];
-        if (Math.hypot(n.x - wx, n.y - wy) < n.r + 16) {
-          let nearest = null, nd = Infinity;
-          for (const b of bodyNodes) { const d = Math.hypot(b.x - n.x, b.y - n.y); if (d < nd) { nd = d; nearest = b; } }
-          if (!nearest) return;
-
-          const ang = Math.atan2(n.y - nearest.y, n.x - nearest.x);
-          const sd = nearest.r + n.r + 4;
-          n.x = nearest.x + Math.cos(ang) * sd;
-          n.y = nearest.y + Math.sin(ang) * sd;
-          n.px = n.x; n.py = n.y;
-          n.inBody = true; worldNodes.splice(i, 1); bodyNodes.push(n);
-          springs.push(new Spring(nearest, n));
-          for (const b of bodyNodes) {
-            if (b === n || b === nearest) continue;
-            if (Math.hypot(b.x - n.x, b.y - n.y) < 88) springs.push(new Spring(b, n));
-          }
-          spawnP(n.x, n.y, T[n.type].glow, 14);
-          hovNode = null; return;
-        }
+        liveSpringPreviews = bodyNodes.filter(b => Math.hypot(b.x - draggingNode.x, b.y - draggingNode.y) < 95);
       }
     }
 
-    canvas.addEventListener('click', e => handleInteraction(e.clientX, e.clientY));
+    function handlePointerDown(e) {
+      if (e.target.tagName === 'BUTTON' || e.target.closest('#panel') || e.target.closest('#mobile-bar') || e.target.closest('#cam-controls') || e.target.closest('#element-palette')) {
+        return;
+      }
+      const rect = canvas.getBoundingClientRect();
+      const clientX = e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+      const clientY = e.clientY || (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+      const pos = screenToWorld(clientX - rect.left, clientY - rect.top);
+
+      if (e.touches && e.touches.length === 2) {
+        isPinching = true;
+        isPanning = false;
+        draggingNode = null;
+        initialPinchDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY) || 1;
+        initialZoom = cam.zoom;
+        return;
+      }
+
+      if (simMode) return;
+
+      // Check hit node
+      let hit = null;
+      for (const n of bodyNodes) {
+        if (Math.hypot(n.x - pos.x, n.y - pos.y) < n.r + 14) { hit = n; break; }
+      }
+      if (!hit) {
+        for (const n of worldNodes) {
+          if (Math.hypot(n.x - pos.x, n.y - pos.y) < n.r + 16) { hit = n; break; }
+        }
+      }
+
+      if (hit) {
+        draggingNode = hit;
+        dragOffset = { x: hit.x - pos.x, y: hit.y - pos.y };
+        updateLiveSpringPreviews();
+      } else {
+        isPanning = true;
+        panStart = { x: clientX, y: clientY, camX: cam.x, camY: cam.y };
+      }
+    }
+
+    function handlePointerMove(e) {
+      const rect = canvas.getBoundingClientRect();
+      const clientX = e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+      const clientY = e.clientY || (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+
+      mouse.x = clientX - rect.left; mouse.y = clientY - rect.top;
+      const pos = screenToWorld(mouse.x, mouse.y);
+      mouse.wx = pos.x; mouse.wy = pos.y;
+
+      if (e.touches && e.touches.length === 2 && isPinching) {
+        const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        const factor = dist / initialPinchDist;
+        cam.zoom = Math.max(0.4, Math.min(2.2, initialZoom * factor));
+        return;
+      }
+
+      if (isPanning) {
+        const dx = clientX - panStart.x;
+        const dy = clientY - panStart.y;
+        cam.x = panStart.camX - dx / cam.zoom;
+        cam.y = panStart.camY - dy / cam.zoom;
+        return;
+      }
+
+      if (draggingNode && !simMode) {
+        draggingNode.x = pos.x + dragOffset.x;
+        draggingNode.y = pos.y + dragOffset.y;
+        draggingNode.px = draggingNode.x;
+        draggingNode.py = draggingNode.y;
+        updateLiveSpringPreviews();
+      } else if (!simMode) {
+        hovNode = null;
+        for (const n of bodyNodes) { if (Math.hypot(n.x - pos.x, n.y - pos.y) < n.r + 6) { hovNode = n; break; } }
+        if (!hovNode) for (const n of worldNodes) { if (Math.hypot(n.x - pos.x, n.y - pos.y) < n.r + 8) { hovNode = n; break; } }
+      }
+
+      if (hovNode && !simMode && !draggingNode) {
+        const td = T[hovNode.type];
+        document.getElementById('tn').textContent = td.label;
+        document.getElementById('td').textContent = td.desc;
+        document.getElementById('ta').textContent = hovNode.inBody ? '← Потягніть / Клік: відокремити' : '→ Потягніть / Клік: додати до тіла';
+        tip.style.cssText = `display:block;left:${clientX + 14}px;top:${clientY - 10}px`;
+        canvas.style.cursor = 'pointer';
+      } else {
+        tip.style.display = 'none';
+        canvas.style.cursor = simMode ? 'default' : draggingNode ? 'grabbing' : 'grab';
+      }
+    }
+
+    function handlePointerUp() {
+      if (isPanning) { isPanning = false; }
+      if (isPinching) { isPinching = false; }
+
+      if (draggingNode && !simMode) {
+        const n = draggingNode;
+        if (!n.inBody) {
+          // Attach check
+          let nearest = null, nd = Infinity;
+          for (const b of bodyNodes) { const d = Math.hypot(b.x - n.x, b.y - n.y); if (d < nd) { nd = d; nearest = b; } }
+          if (nearest && (nd < 95 || liveSpringPreviews.length > 0)) {
+            const idx = worldNodes.indexOf(n);
+            if (idx !== -1) worldNodes.splice(idx, 1);
+            n.inBody = true;
+            bodyNodes.push(n);
+            
+            springs.push(new Spring(nearest, n));
+            for (const b of bodyNodes) {
+              if (b !== n && b !== nearest && Math.hypot(b.x - n.x, b.y - n.y) < 90) {
+                springs.push(new Spring(b, n));
+              }
+            }
+            spawnP(n.x, n.y, T[n.type].glow, 16);
+          }
+        } else {
+          // Detach check
+          let nearestDist = Infinity;
+          for (const b of bodyNodes) {
+            if (b !== n) {
+              const d = Math.hypot(b.x - n.x, b.y - n.y);
+              if (d < nearestDist) nearestDist = d;
+            }
+          }
+          if (nearestDist > 140 && bodyNodes.length > 1) {
+            const idx = bodyNodes.indexOf(n);
+            if (idx !== -1) bodyNodes.splice(idx, 1);
+            n.inBody = false;
+            worldNodes.push(n);
+            for (let j = springs.length - 1; j >= 0; j--) {
+              if (springs[j].a === n || springs[j].b === n) springs.splice(j, 1);
+            }
+            spawnP(n.x, n.y, '#EF5350', 12);
+          }
+        }
+        draggingNode = null;
+        liveSpringPreviews = [];
+      }
+    }
+
+    // Attach Event Listeners
+    canvas.addEventListener('mousedown', handlePointerDown);
+    canvas.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('mouseup', handlePointerUp);
 
     canvas.addEventListener('touchstart', e => {
-      if (e.touches.length > 0) {
-        handleInteraction(e.touches[0].clientX, e.touches[0].clientY);
-      }
+      handlePointerDown(e);
     }, { passive: true });
 
     canvas.addEventListener('touchmove', e => {
-      if (e.touches.length > 0) {
-        const t = e.touches[0];
-        const rect = canvas.getBoundingClientRect();
-        mouse.x = t.clientX - rect.left; mouse.y = t.clientY - rect.top;
-        mouse.wx = mouse.x + cam.x; mouse.wy = mouse.y + cam.y;
-      }
+      handlePointerMove(e);
     }, { passive: true });
+
+    window.addEventListener('touchend', handlePointerUp);
+    window.addEventListener('touchcancel', handlePointerUp);
+
+    canvas.addEventListener('wheel', e => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.12 : 0.88;
+      cam.zoom = Math.max(0.4, Math.min(2.2, cam.zoom * factor));
+    }, { passive: false });
+
+    canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+
+    // Floating camera controls listeners
+    document.getElementById('zoom-in').addEventListener('click', () => {
+      cam.zoom = Math.min(2.0, cam.zoom + 0.2);
+    });
+    document.getElementById('zoom-out').addEventListener('click', () => {
+      cam.zoom = Math.max(0.4, cam.zoom - 0.2);
+    });
+    document.getElementById('cam-center').addEventListener('click', () => {
+      cam.zoom = 1.0;
+      if (bodyNodes.length > 0) {
+        const cx = bodyNodes.reduce((s, n) => s + n.x, 0) / bodyNodes.length;
+        const cy = bodyNodes.reduce((s, n) => s + n.y, 0) / bodyNodes.length;
+        cam.x = cx - canvas.width * 0.4;
+        cam.y = cy - canvas.height * 0.55;
+      } else {
+        cam.x = 0; cam.y = 0;
+      }
+    });
 
     // ── TERRAIN & MODE CONTROLS ───────────────────────────
     const diffSlider = document.getElementById('diff-slider');
@@ -1616,7 +1931,7 @@
         const dx = SX - cx, dy = gy - 28 - cy;
         for (const n of bodyNodes) { n.x += dx; n.px = n.x; n.y += dy; n.py = n.y; }
       }
-      cam.x = 0; cam.y = 0; won = false; updateUI();
+      cam.x = 0; cam.y = 0; cam.zoom = 1.0; won = false; updateUI();
     });
 
     if (mResetBtn) mResetBtn.addEventListener('click', () => document.getElementById('reset-btn').click());
